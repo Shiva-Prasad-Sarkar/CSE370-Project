@@ -1,0 +1,137 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ECOGROW Registration</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: url('https://thumbs.dreamstime.com/b/young-flowers-plant-nursery-1-1575922.jpg?w=768') no-repeat center center/cover;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .navbar {
+      background-color: #8cf39faf;
+      padding: 15px 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 2px 5px rgba(112, 34, 34, 0.427);
+    }
+
+    .navbar .logo {
+      font-size: 40px;
+      font-weight: bold;
+      color: #073708;
+    }
+
+    .container {
+      flex: 10;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .register-container {
+      background: rgba(243, 239, 239, 0.251);
+      padding: 50px 60px;
+      border-radius: 12px;
+      box-shadow: 0 10px 25px #d71c1c4d;
+      width: 400px;
+    }
+
+    .register-container h2 {
+      text-align: center;
+      margin-bottom: 30px;
+      color: #141111ee;
+    }
+
+    .input-group {
+      margin-bottom: 20px;
+      position: relative;
+    }
+
+    .input-group label {
+      display: block;
+      margin-bottom: 6px;
+      color: #080707;
+      font-weight: bold;
+    }
+
+    .input-group input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #480404;
+      border-radius: 8px;
+      font-size: 18px;
+    }
+
+    .register-btn {
+      width: 80%; /* Adjust button size */
+      padding: 10px; /* Make it slightly smaller */
+      background-color: #53a758;
+      border: 1px solid #480404;
+      border-radius: 8px;
+      color: white;
+      font-size: 16px;
+      cursor: pointer;
+      transition: background 0.3s ease;
+      display: block; /* Ensures block-level alignment */
+      margin: 0 auto; /* Centers the button horizontally */
+    }
+
+    .register-btn:hover {
+      background-color: #115612;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation Bar -->
+  <div class="navbar">
+    <div class="logo">&#127793; ECOGROW</div>
+  </div>
+
+  <!-- Registration Form -->
+  <div class="container">
+    <div class="register-container">
+      <h2>Register</h2>
+      <form action="register.php" method="POST">
+        <div class="input-group">
+          <label for="name">Full Name</label>
+          <input type="text" id="name" name="name" placeholder="Enter your full name" required>
+        </div>
+
+        <div class="input-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" placeholder="Enter your email" required>
+        </div>
+
+        <div class="input-group">
+          <label for="phone">Phone Number</label>
+          <input type="tel" id="phone" name="phone" placeholder="Enter your phone number" required>
+        </div>
+
+        <div class="input-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" placeholder="Enter your password" required>
+        </div>
+
+        <div class="input-group">
+          <label for="confirm-password">Confirm Password</label>
+          <input type="password" id="confirm-password" name="confirm_password" placeholder="Confirm your password" required>
+        </div>
+
+        <button type="submit" class="register-btn">Submit</button>
+      </form>
+    </div>
+  </div>
+
+</body>
+</html>

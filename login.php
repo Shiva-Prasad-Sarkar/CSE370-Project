@@ -14,7 +14,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($email) || empty($pass)) {
         $error = 'Please fill in all fields.';
     } else {
-        $stmt = $conn->prepare("SELECT ID, Name, Password FROM Customers WHERE Email = ?");
+        $stmt = $conn->prepare("SELECT ID, Name, Password FROM customers WHERE Email = ?");
         $stmt->bind_param("s", $email);
         $stmt->execute();
         $user = $stmt->get_result()->fetch_assoc();
@@ -25,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$verified && $pass === $user['Password']) {
                 // Plain-text match — migrate to bcrypt on the fly
                 $hashed = password_hash($pass, PASSWORD_DEFAULT);
-                $upd = $conn->prepare("UPDATE Customers SET Password = ? WHERE ID = ?");
+                $upd = $conn->prepare("UPDATE customers SET Password = ? WHERE ID = ?");
                 $upd->bind_param("si", $hashed, $user['ID']);
                 $upd->execute();
                 $upd->close();

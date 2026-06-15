@@ -18,7 +18,7 @@ $access_pass = "123";
 $date        = date("Y-m-d");
 
 // Check for duplicate
-$stmt = $conn->prepare("SELECT COUNT(*) FROM Customers_Workshops WHERE CustomerID = ? AND WorkshopID = ?");
+$stmt = $conn->prepare("SELECT COUNT(*) FROM customers_workshops WHERE CustomerID = ? AND WorkshopID = ?");
 $stmt->bind_param("ii", $customer_id, $event_id);
 $stmt->execute();
 $stmt->bind_result($count);
@@ -32,7 +32,7 @@ if ($count > 0) {
     exit;
 }
 
-$stmt = $conn->prepare("INSERT INTO Customers_Workshops (CustomerID, WorkshopID, AccessPass, Date) VALUES (?, ?, ?, ?)");
+$stmt = $conn->prepare("INSERT INTO customers_workshops (CustomerID, WorkshopID, AccessPass, Date) VALUES (?, ?, ?, ?)");
 $stmt->bind_param("iiss", $customer_id, $event_id, $access_pass, $date);
 
 if ($stmt->execute()) {

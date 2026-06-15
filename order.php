@@ -19,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    $stmt = $conn->prepare("SELECT Price, Stock FROM Products WHERE ID = ?");
+    $stmt = $conn->prepare("SELECT Price, Stock FROM products WHERE ID = ?");
     $stmt->bind_param("i", $product_id);
     $stmt->execute();
     $prod = $stmt->get_result()->fetch_assoc();
@@ -41,22 +41,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $bill = $prod['Price'] * $quantity;
 
     $stmt = $conn->prepare(
-        "INSERT INTO Orders (CustomerID, Date, Bill, Count, Address, Product_Id)
+        "INSERT INTO orders (CustomerID, Date, Bill, Count, Address, Product_Id)
          VALUES (?, CURDATE(), ?, ?, ?, ?)"
     );
     $stmt->bind_param("idisi", $user_id, $bill, $quantity, $address, $product_id);
     $stmt->execute();
+    $new_order_id = (int)$conn->insert_id;
     $stmt->close();
 
-    $stmt = $conn->prepare("UPDATE Products SET Stock = Stock - ? WHERE ID = ?");
+    $stmt = $conn->prepare("UPDATE products SET Stock = Stock - ? WHERE ID = ?");
     $stmt->bind_param("ii", $quantity, $product_id);
     $stmt->execute();
     $stmt->close();
 
-    $stmt = $conn->prepare("DELETE FROM Cart WHERE CustomerID = ? AND ProductID = ?");
+    $stmt = $conn->prepare("DELETE FROM cart WHERE CustomerID = ? AND ProductID = ?");
     $stmt->bind_param("ii", $user_id, $product_id);
     $stmt->execute();
     $stmt->close();
+
+    // Record initial order status
+    $stmt_s = $conn->prepare("INSERT IGNORE INTO order_status (OrderID, Status) VALUES (?, 'Placed')");
+    if ($stmt_s) { $stmt_s->bind_param("i", $new_order_id); $stmt_s->execute(); $stmt_s->close(); }
 
     $conn->close();
     set_flash('success', 'Order placed! We will process it soon.');
@@ -68,7 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $product_id = (int)($_GET['productid'] ?? 0);
 if (!$product_id) { header("Location: product.php"); exit; }
 
-$stmt = $conn->prepare("SELECT ID, Name, Price, Stock FROM Products WHERE ID = ?");
+$stmt = $conn->prepare("SELECT ID, Name, Price, Stock FROM products WHERE ID = ?");
 $stmt->bind_param("i", $product_id);
 $stmt->execute();
 $product = $stmt->get_result()->fetch_assoc();

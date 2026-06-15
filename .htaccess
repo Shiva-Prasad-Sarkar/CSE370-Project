@@ -1,0 +1,14 @@
+Options -Indexes
+ErrorDocument 404 /404.php
+ErrorDocument 403 /404.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^login$ /login.php [L,R=301]
+    RewriteRule ^register$ /register.php [L,R=301]
+    RewriteRule ^products$ /product.php [L,R=301]
+    RewriteRule ^events$ /events.php [L,R=301]
+    RewriteRule ^about$ /about.php [L,R=301]
+</IfModule>

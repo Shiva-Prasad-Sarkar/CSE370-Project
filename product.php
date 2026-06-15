@@ -7,7 +7,7 @@ $loggedIn = isset($_SESSION['customer_id']);
 
 // Build safe query with prepared statements
 $sql    = "SELECT p.ID, p.Name, p.Category, p.SubType, p.Price, p.Stock, p.Details, pp.Photo
-           FROM Products p LEFT JOIN product_photos pp ON p.ID = pp.ProductID";
+           FROM products p LEFT JOIN product_photos pp ON p.ID = pp.ProductID";
 $where  = [];
 $params = [];
 $types  = '';
@@ -119,17 +119,21 @@ if ($params) {
         <?php if ($result && $result->num_rows > 0): ?>
             <?php while ($row = $result->fetch_assoc()): ?>
             <div class="bg-white rounded-xl shadow-sm border border-green-100 overflow-hidden hover:shadow-md transition flex flex-col">
-                <?php if (!empty($row['Photo'])): ?>
-                    <img src="<?= htmlspecialchars($row['Photo']) ?>"
-                         alt="<?= htmlspecialchars($row['Name']) ?>"
-                         class="w-full h-48 object-cover">
-                <?php else: ?>
-                    <div class="w-full h-48 bg-green-100 flex items-center justify-center text-5xl">🌿</div>
-                <?php endif; ?>
+                <a href="product_detail.php?id=<?= (int)$row['ID'] ?>">
+                    <?php if (!empty($row['Photo'])): ?>
+                        <img src="<?= htmlspecialchars($row['Photo']) ?>"
+                             alt="<?= htmlspecialchars($row['Name']) ?>"
+                             class="w-full h-48 object-cover hover:opacity-90 transition">
+                    <?php else: ?>
+                        <div class="w-full h-48 bg-green-100 flex items-center justify-center text-5xl">🌿</div>
+                    <?php endif; ?>
+                </a>
 
                 <div class="p-4 flex flex-col flex-1">
                     <div class="flex items-start justify-between mb-2 gap-2">
-                        <h3 class="font-semibold text-green-800 text-sm leading-snug"><?= htmlspecialchars($row['Name']) ?></h3>
+                        <a href="product_detail.php?id=<?= (int)$row['ID'] ?>" class="hover:text-green-600 transition">
+                            <h3 class="font-semibold text-green-800 text-sm leading-snug"><?= htmlspecialchars($row['Name']) ?></h3>
+                        </a>
                         <span class="shrink-0 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full"><?= htmlspecialchars($row['Category']) ?></span>
                     </div>
                     <p class="text-xl font-bold text-green-600 mb-2">$<?= number_format($row['Price'], 2) ?></p>

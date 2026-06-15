@@ -25,7 +25,7 @@ if (isset($_POST['change_password'])) {
         $msg = 'New password must be at least 6 characters.';
         $msg_type = 'error';
     } else {
-        $stmt = $conn->prepare("SELECT Password, Type FROM Customers WHERE ID = ?");
+        $stmt = $conn->prepare("SELECT Password, Type FROM customers WHERE ID = ?");
         $stmt->bind_param("i", $user_id);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
@@ -36,7 +36,7 @@ if (isset($_POST['change_password'])) {
             $msg_type = 'error';
         } elseif (password_verify($current, $row['Password']) || $current === $row['Password']) {
             $hashed = password_hash($new, PASSWORD_DEFAULT);
-            $upd = $conn->prepare("UPDATE Customers SET Password = ? WHERE ID = ?");
+            $upd = $conn->prepare("UPDATE customers SET Password = ? WHERE ID = ?");
             $upd->bind_param("si", $hashed, $user_id);
             $upd->execute();
             $upd->close();
@@ -50,7 +50,7 @@ if (isset($_POST['change_password'])) {
 }
 
 // Fetch user
-$stmt = $conn->prepare("SELECT ID, Name, Email, Type, Points FROM Customers WHERE ID = ?");
+$stmt = $conn->prepare("SELECT ID, Name, Email, Type, Points FROM customers WHERE ID = ?");
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
 $user = $stmt->get_result()->fetch_assoc();
@@ -61,7 +61,7 @@ if (!$user) { session_destroy(); header("Location: login.php"); exit; }
 // Cart
 $stmt = $conn->prepare(
     "SELECT c.ProductID, c.AddedOn, p.Name, p.Price, p.Stock
-     FROM Cart c JOIN Products p ON c.ProductID = p.ID
+     FROM cart c JOIN products p ON c.ProductID = p.ID
      WHERE c.CustomerID = ?"
 );
 $stmt->bind_param("i", $user_id);
@@ -69,14 +69,16 @@ $stmt->execute();
 $cart_items = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-// Orders
+// Orders (with status timeline)
 $stmt = $conn->prepare(
     "SELECT o.ID AS order_id, o.Date, o.Bill, o.Count, o.Address,
             COALESCE(a.IsPending, 1) AS IsPending,
+            COALESCE(os.Status, 'Placed') AS OStatus,
             GROUP_CONCAT(p.Name SEPARATOR ', ') AS ProductNames
-     FROM Orders o
-     LEFT JOIN Admin_Confirms_Orders a ON o.ID = a.OrderID
-     JOIN Products p ON o.Product_Id = p.ID
+     FROM orders o
+     LEFT JOIN admin_confirms_orders a ON o.ID = a.OrderID
+     LEFT JOIN order_status os ON o.ID = os.OrderID
+     JOIN products p ON o.Product_Id = p.ID
      WHERE o.CustomerID = ?
      GROUP BY o.ID ORDER BY o.Date DESC"
 );
@@ -85,10 +87,13 @@ $stmt->execute();
 $orders = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
+$status_steps = ['Placed', 'Processing', 'Shipped', 'Delivered'];
+$status_icons = ['Placed'=>'📋','Processing'=>'⚙️','Shipped'=>'🚚','Delivered'=>'✅'];
+
 // Events
 $stmt = $conn->prepare(
     "SELECT w.WID, w.Topic, w.Subject, w.Date, w.Type, w.Price, cw.Date AS RegistrationDate
-     FROM Workshops w JOIN Customers_Workshops cw ON w.WID = cw.WorkshopID
+     FROM workshops w JOIN customers_workshops cw ON w.WID = cw.WorkshopID
      WHERE cw.CustomerID = ? ORDER BY w.Date ASC"
 );
 $stmt->bind_param("i", $user_id);
@@ -172,10 +177,19 @@ $default_tab = $msg ? 'security' : (count($cart_items) > 0 ? 'cart' : 'orders');
                                 <td class="py-3 pr-4 text-gray-500"><?= (int)$item['Stock'] ?></td>
                                 <td class="py-3 pr-4 text-gray-400 text-xs"><?= htmlspecialchars($item['AddedOn']) ?></td>
                                 <td class="py-3">
-                                    <a href="order.php?productid=<?= urlencode($item['ProductID']) ?>"
-                                        class="bg-green-600 text-white text-xs px-3 py-1.5 rounded-lg hover:bg-green-700 transition font-medium">
-                                        Order
-                                    </a>
+                                    <div class="flex items-center gap-1.5">
+                                        <a href="order.php?productid=<?= urlencode($item['ProductID']) ?>"
+                                            class="bg-green-600 text-white text-xs px-3 py-1.5 rounded-lg hover:bg-green-700 transition font-medium">
+                                            Order
+                                        </a>
+                                        <form method="POST" action="remove_from_cart.php" onsubmit="return confirm('Remove this item from cart?')">
+                                            <input type="hidden" name="product_id" value="<?= (int)$item['ProductID'] ?>">
+                                            <button type="submit"
+                                                class="bg-red-100 text-red-600 text-xs px-3 py-1.5 rounded-lg hover:bg-red-200 transition font-medium">
+                                                Remove
+                                            </button>
+                                        </form>
+                                    </div>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
@@ -195,44 +209,68 @@ $default_tab = $msg ? 'security' : (count($cart_items) > 0 ? 'cart' : 'orders');
         <div id="panel-orders" class="tab-panel p-6 <?= $default_tab !== 'orders' ? 'hidden' : '' ?>">
             <h2 class="text-base font-semibold text-green-800 mb-4">Your Orders</h2>
             <?php if ($orders): ?>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-sm">
-                        <thead>
-                            <tr class="text-xs text-gray-400 uppercase tracking-wide border-b border-gray-100 text-left">
-                                <th class="pb-3 pr-4 font-medium">#</th>
-                                <th class="pb-3 pr-4 font-medium">Products</th>
-                                <th class="pb-3 pr-4 font-medium">Date</th>
-                                <th class="pb-3 pr-4 font-medium">Total</th>
-                                <th class="pb-3 pr-4 font-medium">Qty</th>
-                                <th class="pb-3 pr-4 font-medium">Address</th>
-                                <th class="pb-3 font-medium">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-gray-50">
-                            <?php foreach ($orders as $o): ?>
-                            <tr class="hover:bg-gray-50 transition">
-                                <td class="py-3 pr-4 text-gray-400 text-xs">#<?= $o['order_id'] ?></td>
-                                <td class="py-3 pr-4 font-medium text-gray-800 max-w-[160px] truncate"><?= htmlspecialchars($o['ProductNames']) ?></td>
-                                <td class="py-3 pr-4 text-gray-500 text-xs"><?= htmlspecialchars($o['Date']) ?></td>
-                                <td class="py-3 pr-4 text-green-600 font-semibold">$<?= number_format($o['Bill'], 2) ?></td>
-                                <td class="py-3 pr-4 text-gray-500"><?= (int)$o['Count'] ?></td>
-                                <td class="py-3 pr-4 text-gray-400 text-xs max-w-[120px] truncate"><?= htmlspecialchars($o['Address']) ?></td>
-                                <td class="py-3">
-                                    <?php if ($o['IsPending']): ?>
-                                        <span class="bg-yellow-100 text-yellow-700 text-xs px-2 py-1 rounded-full font-medium">Pending</span>
-                                    <?php else: ?>
-                                        <span class="bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full font-medium">Confirmed</span>
-                                    <?php endif; ?>
-                                </td>
-                            </tr>
+                <div class="space-y-4">
+                    <?php foreach ($orders as $o):
+                        $cur_step = array_search($o['OStatus'], $status_steps);
+                        if ($cur_step === false) $cur_step = 0;
+                    ?>
+                    <div class="border border-gray-100 rounded-xl p-5 hover:bg-gray-50 transition">
+                        <!-- Order header -->
+                        <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+                            <div>
+                                <p class="font-semibold text-gray-800 text-sm"><?= htmlspecialchars($o['ProductNames']) ?></p>
+                                <p class="text-xs text-gray-400 mt-0.5">
+                                    Order #<?= $o['order_id'] ?> &nbsp;·&nbsp; <?= htmlspecialchars($o['Date']) ?>
+                                    &nbsp;·&nbsp; Qty: <?= (int)$o['Count'] ?>
+                                    &nbsp;·&nbsp; <?= htmlspecialchars(mb_substr($o['Address'], 0, 30)) ?>…
+                                </p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-lg font-bold text-green-600">$<?= number_format($o['Bill'], 2) ?></p>
+                                <?php if ($o['IsPending'] && $o['OStatus'] === 'Placed'): ?>
+                                    <form method="POST" action="cancel_order.php" class="inline"
+                                          onsubmit="return confirm('Cancel order #<?= $o['order_id'] ?>?')">
+                                        <input type="hidden" name="order_id" value="<?= (int)$o['order_id'] ?>">
+                                        <button type="submit" class="text-xs text-red-500 hover:text-red-700 font-medium mt-1">Cancel order</button>
+                                    </form>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
+                        <!-- Status timeline -->
+                        <div class="flex items-center gap-0">
+                            <?php foreach ($status_steps as $i => $step):
+                                $done    = $i <= $cur_step;
+                                $current = $i === $cur_step;
+                                $last    = $i === count($status_steps) - 1;
+                            ?>
+                            <div class="flex items-center flex-1 <?= $last ? '' : '' ?>">
+                                <div class="flex flex-col items-center shrink-0">
+                                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border-2 transition
+                                        <?= $done
+                                            ? ($current ? 'bg-green-600 border-green-600 text-white' : 'bg-green-500 border-green-500 text-white')
+                                            : 'bg-white border-gray-200 text-gray-300' ?>">
+                                        <?= $done ? ($current ? $status_icons[$step] : '✓') : ($i + 1) ?>
+                                    </div>
+                                    <p class="text-xs mt-1 font-medium whitespace-nowrap
+                                        <?= $current ? 'text-green-700' : ($done ? 'text-gray-500' : 'text-gray-300') ?>">
+                                        <?= $step ?>
+                                    </p>
+                                </div>
+                                <?php if (!$last): ?>
+                                <div class="flex-1 h-0.5 mx-1 mb-5 <?= $i < $cur_step ? 'bg-green-500' : 'bg-gray-200' ?>"></div>
+                                <?php endif; ?>
+                            </div>
                             <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
                 </div>
             <?php else: ?>
                 <div class="text-center py-14 text-gray-400">
                     <div class="text-4xl mb-3">📦</div>
                     <p>No orders yet.</p>
+                    <a href="product.php" class="text-green-600 text-sm mt-2 inline-block hover:underline">Browse Products</a>
                 </div>
             <?php endif; ?>
         </div>

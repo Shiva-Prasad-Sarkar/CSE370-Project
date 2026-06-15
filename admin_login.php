@@ -10,7 +10,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = trim($_POST['email'] ?? '');
     $pass  = $_POST['password'] ?? '';
 
-    $stmt = $conn->prepare("SELECT ID, Name, Position, Email, Photo, Password FROM Admins WHERE Email = ?");
+    $stmt = $conn->prepare("SELECT ID, Name, Position, Email, Photo, Password FROM admins WHERE Email = ?");
     $stmt->bind_param("s", $email);
     $stmt->execute();
     $admin = $stmt->get_result()->fetch_assoc();
@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$ok && $pass === $admin['Password']) {
             // Migrate plain-text to bcrypt
             $hashed = password_hash($pass, PASSWORD_DEFAULT);
-            $upd = $conn->prepare("UPDATE Admins SET Password = ? WHERE ID = ?");
+            $upd = $conn->prepare("UPDATE admins SET Password = ? WHERE ID = ?");
             $upd->bind_param("si", $hashed, $admin['ID']);
             $upd->execute();
             $upd->close();

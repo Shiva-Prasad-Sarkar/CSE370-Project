@@ -24,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (strlen($pass) < 6) {
         $error = 'Password must be at least 6 characters.';
     } else {
-        $stmt = $conn->prepare("SELECT ID FROM Customers WHERE Email = ?");
+        $stmt = $conn->prepare("SELECT ID FROM customers WHERE Email = ?");
         $stmt->bind_param("s", $email);
         $stmt->execute();
         $stmt->store_result();
@@ -34,7 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $stmt->close();
             $hashed = password_hash($pass, PASSWORD_DEFAULT);
-            $stmt = $conn->prepare("INSERT INTO Customers (Name, Phone, Email, Type, Password) VALUES (?, ?, ?, 'Registered', ?)");
+            $stmt = $conn->prepare("INSERT INTO customers (Name, Phone, Email, Type, Password) VALUES (?, ?, ?, 'Registered', ?)");
             $stmt->bind_param("ssss", $name, $phone, $email, $hashed);
             if ($stmt->execute()) {
                 $stmt->close();

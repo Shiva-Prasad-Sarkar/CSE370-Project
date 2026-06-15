@@ -1,321 +1,328 @@
 <?php
 session_start();
+if (!isset($_SESSION['customer_id'])) { header("Location: login.php"); exit; }
 
-// If user is not logged in, redirect to login page
-if (!isset($_SESSION['customer_id'])) {
-    header("Location: login.html");
-    exit();
-}
+require_once 'config.php';
+require_once 'includes/flash.php';
 
-// Handle logout request
-if (isset($_POST['logout'])) {
-    session_destroy();
-    header("Location: login.html");
-    exit();
-}
+$user_id  = $_SESSION['customer_id'];
+$msg      = '';
+$msg_type = '';
 
-// Connect to MySQL database
-$mysqli = new mysqli("localhost", "root", "", "ecogrow");
-if ($mysqli->connect_error) {
-    die("Connection failed: " . $mysqli->connect_error);
-}
-
-$user_id = $_SESSION['customer_id'];
-
-// Fetch customer data from the Customers table
-$stmt = $mysqli->prepare("SELECT ID, Name, Email, Password, Type, Points FROM Customers WHERE ID = ?");
-$stmt->bind_param("i", $user_id);
-$stmt->execute();
-$result = $stmt->get_result();
-if ($result->num_rows == 0) {
-    echo "User not found.";
-    exit();
-}
-$user = $result->fetch_assoc();
-$stmt->close();
-
-$message = "";
-
-// Handle the change-password form submission using plain text comparison
+// Handle password change
 if (isset($_POST['change_password'])) {
-    // Make sure all fields are provided
-    $current_password     = trim($_POST['current_password'] ?? '');
-    $new_password         = trim($_POST['new_password'] ?? '');
-    $confirm_new_password = trim($_POST['confirm_new_password'] ?? '');
+    $current = trim($_POST['current_password'] ?? '');
+    $new     = trim($_POST['new_password'] ?? '');
+    $confirm = trim($_POST['confirm_new_password'] ?? '');
 
-    if (empty($current_password) || empty($new_password) || empty($confirm_new_password)) {
-        $message = "Please fill all the fields.";
-    } elseif ($new_password !== $confirm_new_password) {
-        $message = "New password and confirmation do not match.";
+    if (empty($current) || empty($new) || empty($confirm)) {
+        $msg = 'Please fill all password fields.';
+        $msg_type = 'error';
+    } elseif ($new !== $confirm) {
+        $msg = 'New password and confirmation do not match.';
+        $msg_type = 'error';
+    } elseif (strlen($new) < 6) {
+        $msg = 'New password must be at least 6 characters.';
+        $msg_type = 'error';
     } else {
-        // Only allow password changes for Registered users
-        if ($user['Type'] !== 'Registered') {
-            $message = "Guests cannot change their password.";
+        $stmt = $conn->prepare("SELECT Password, Type FROM Customers WHERE ID = ?");
+        $stmt->bind_param("i", $user_id);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if ($row['Type'] !== 'Registered') {
+            $msg = 'Guest accounts cannot change their password.';
+            $msg_type = 'error';
+        } elseif (password_verify($current, $row['Password']) || $current === $row['Password']) {
+            $hashed = password_hash($new, PASSWORD_DEFAULT);
+            $upd = $conn->prepare("UPDATE Customers SET Password = ? WHERE ID = ?");
+            $upd->bind_param("si", $hashed, $user_id);
+            $upd->execute();
+            $upd->close();
+            $msg = 'Password updated successfully.';
+            $msg_type = 'success';
         } else {
-            // Compare passwords in plain text
-            if ($current_password === $user['Password']) {
-                $stmt = $mysqli->prepare("UPDATE Customers SET Password = ? WHERE ID = ?");
-                $stmt->bind_param("si", $new_password, $user_id);
-                if ($stmt->execute()) {
-                    $message = "Password updated successfully.";
-                    $user['Password'] = $new_password;
-                } else {
-                    $message = "Failed to update password. Please try again later.";
-                }
-                $stmt->close();
-            } else {
-                $message = "Current password is incorrect.";
-            }
+            $msg = 'Current password is incorrect.';
+            $msg_type = 'error';
         }
     }
 }
 
-// Retrieve cart items for the customer by joining Cart with Products
-$stmt_cart = $mysqli->prepare("SELECT c.ProductID, c.AddedOn, p.Name, p.Price, p.Stock 
-                               FROM Cart c 
-                               JOIN Products p ON c.ProductID = p.ID 
-                               WHERE c.CustomerID = ?");
-$stmt_cart->bind_param("i", $user_id);
-$stmt_cart->execute();
-$cart_result = $stmt_cart->get_result();
-$cart_items = [];
-while ($row = $cart_result->fetch_assoc()) {
-    $cart_items[] = $row;
-}
-$stmt_cart->close();
+// Fetch user
+$stmt = $conn->prepare("SELECT ID, Name, Email, Type, Points FROM Customers WHERE ID = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$user = $stmt->get_result()->fetch_assoc();
+$stmt->close();
 
-// Retrieve confirmed orders for this customer.
-// We left join the Admin_Confirms_Orders table to get status info.
-// If no row exists for an order in Admin_Confirms_Orders, we treat it as pending.
-$stmt_orders = $mysqli->prepare("
-    SELECT o.ID AS order_id,
-           o.Date,
-           o.Bill,
-           o.Count,
-           o.Address,
-           COALESCE(a.IsPending, 1) AS IsPending,
-           GROUP_CONCAT(p.Name SEPARATOR ', ') AS ProductNames
-    FROM Orders o
-    LEFT JOIN Admin_Confirms_Orders a ON o.ID = a.OrderID
-    JOIN Products p ON o.Product_Id = p.ID
-    WHERE o.CustomerID = ?
-    GROUP BY o.ID
-    ORDER BY o.Date DESC
-");
+if (!$user) { session_destroy(); header("Location: login.php"); exit; }
 
-$stmt_orders->bind_param("i", $user_id);
-$stmt_orders->execute();
-$result_orders = $stmt_orders->get_result();
-$orders = [];
-while ($order = $result_orders->fetch_assoc()) {
-    $orders[] = $order;
-}
-$stmt_orders->close();
+// Cart
+$stmt = $conn->prepare(
+    "SELECT c.ProductID, c.AddedOn, p.Name, p.Price, p.Stock
+     FROM Cart c JOIN Products p ON c.ProductID = p.ID
+     WHERE c.CustomerID = ?"
+);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$cart_items = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
 
-// Retrieve registered events for the customer by joining Workshops with Customers_Workshops
-$stmt_events = $mysqli->prepare("
-    SELECT w.WID, w.Topic, w.Subject, w.Date, w.Type, w.Price, cw.Date AS RegistrationDate
-    FROM Workshops w
-    JOIN Customers_Workshops cw ON w.WID = cw.WorkshopID
-    WHERE cw.CustomerID = ?
-    ORDER BY w.Date ASC
-");
-$stmt_events->bind_param("i", $user_id);
-$stmt_events->execute();
-$result_events = $stmt_events->get_result();
-$registered_events = [];
-while ($event = $result_events->fetch_assoc()) {
-    $registered_events[] = $event;
-}
-$stmt_events->close();
+// Orders
+$stmt = $conn->prepare(
+    "SELECT o.ID AS order_id, o.Date, o.Bill, o.Count, o.Address,
+            COALESCE(a.IsPending, 1) AS IsPending,
+            GROUP_CONCAT(p.Name SEPARATOR ', ') AS ProductNames
+     FROM Orders o
+     LEFT JOIN Admin_Confirms_Orders a ON o.ID = a.OrderID
+     JOIN Products p ON o.Product_Id = p.ID
+     WHERE o.CustomerID = ?
+     GROUP BY o.ID ORDER BY o.Date DESC"
+);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$orders = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
+
+// Events
+$stmt = $conn->prepare(
+    "SELECT w.WID, w.Topic, w.Subject, w.Date, w.Type, w.Price, cw.Date AS RegistrationDate
+     FROM Workshops w JOIN Customers_Workshops cw ON w.WID = cw.WorkshopID
+     WHERE cw.CustomerID = ? ORDER BY w.Date ASC"
+);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$events = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
+
+$default_tab = $msg ? 'security' : (count($cart_items) > 0 ? 'cart' : 'orders');
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>User Profile - EcoGrow</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .profile, .cart, .password-change, .orders, .registered-events { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
-        .message { color: red; }
-        form { margin-top: 10px; }
-        .navigation-buttons { text-align: center; margin-top: 20px; }
-        .navigation-buttons button { margin: 0 10px; padding: 10px 20px; font-size: 1rem; cursor: pointer; }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Profile — EcoGrow</title>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-    <h1>Welcome, <?php echo htmlspecialchars($user['Name']); ?></h1>
+<body class="bg-green-50 min-h-screen flex flex-col">
+<?php require_once 'includes/navbar.php'; ?>
 
-    <!-- Profile Information -->
-    <div class="profile">
-        <h2>Profile Information</h2>
-        <p><strong>Name:</strong> <?php echo htmlspecialchars($user['Name']); ?></p>
-        <p><strong>Email:</strong> <?php echo htmlspecialchars($user['Email']); ?></p>
-        <p><strong>Points:</strong> <?php echo $user['Points']; ?></p>
+<div class="max-w-5xl mx-auto px-4 py-8 flex-1 w-full">
+    <!-- Profile header -->
+    <div class="bg-white rounded-xl shadow-sm border border-green-100 p-6 mb-6 flex items-center gap-5">
+        <div class="w-14 h-14 bg-green-200 rounded-full flex items-center justify-center text-xl font-bold text-green-800 shrink-0">
+            <?= strtoupper(substr($user['Name'], 0, 1)) ?>
+        </div>
+        <div class="flex-1 min-w-0">
+            <h1 class="text-xl font-bold text-green-800 truncate"><?= htmlspecialchars($user['Name']) ?></h1>
+            <p class="text-gray-400 text-sm truncate"><?= htmlspecialchars($user['Email']) ?></p>
+            <span class="inline-block mt-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                <?= $user['Type'] === 'Registered' ? '✅ Registered' : '👤 Guest' ?>
+            </span>
+        </div>
+        <div class="text-right shrink-0">
+            <div class="text-3xl font-bold text-green-600"><?= (int)($user['Points'] ?? 0) ?></div>
+            <div class="text-xs text-gray-400">Reward Points</div>
+        </div>
     </div>
 
-    <!-- Change Password Section -->
-    <div class="password-change">
-        <h2>Change Password</h2>
-        <?php
-        if (!empty($message)) {
-            echo "<p class='message'>" . htmlspecialchars($message) . "</p>";
-        }
-        if ($user['Type'] === 'Registered') { 
-        ?>
-        <form method="post" action="">
-            <label for="current_password">Current Password:</label><br>
-            <input type="password" name="current_password" id="current_password" required><br><br>
+    <!-- Tabs -->
+    <div class="bg-white rounded-xl shadow-sm border border-green-100 overflow-hidden">
+        <div class="flex border-b border-green-100 overflow-x-auto" role="tablist">
+            <?php
+            $tabs = [
+                'cart'     => '🛒 Cart (' . count($cart_items) . ')',
+                'orders'   => '📦 Orders (' . count($orders) . ')',
+                'events'   => '🎓 Events (' . count($events) . ')',
+                'security' => '🔒 Security',
+            ];
+            foreach ($tabs as $id => $label): ?>
+                <button onclick="showTab('<?= $id ?>')" id="tab-<?= $id ?>" role="tab"
+                    class="tab-btn px-5 py-4 text-sm font-medium whitespace-nowrap border-b-2 transition
+                           <?= $id === $default_tab
+                               ? 'border-green-600 text-green-700'
+                               : 'border-transparent text-gray-500 hover:text-green-700' ?>">
+                    <?= $label ?>
+                </button>
+            <?php endforeach; ?>
+        </div>
 
-            <label for="new_password">New Password:</label><br>
-            <input type="password" name="new_password" id="new_password" required><br><br>
+        <!-- Cart -->
+        <div id="panel-cart" class="tab-panel p-6 <?= $default_tab !== 'cart' ? 'hidden' : '' ?>">
+            <h2 class="text-base font-semibold text-green-800 mb-4">Cart</h2>
+            <?php if ($cart_items): ?>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-xs text-gray-400 uppercase tracking-wide border-b border-gray-100 text-left">
+                                <th class="pb-3 pr-4 font-medium">Product</th>
+                                <th class="pb-3 pr-4 font-medium">Price</th>
+                                <th class="pb-3 pr-4 font-medium">Stock</th>
+                                <th class="pb-3 pr-4 font-medium">Added</th>
+                                <th class="pb-3 font-medium">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-50">
+                            <?php foreach ($cart_items as $item): ?>
+                            <tr class="hover:bg-gray-50 transition">
+                                <td class="py-3 pr-4 font-medium text-gray-800"><?= htmlspecialchars($item['Name']) ?></td>
+                                <td class="py-3 pr-4 text-green-600 font-semibold">$<?= number_format($item['Price'], 2) ?></td>
+                                <td class="py-3 pr-4 text-gray-500"><?= (int)$item['Stock'] ?></td>
+                                <td class="py-3 pr-4 text-gray-400 text-xs"><?= htmlspecialchars($item['AddedOn']) ?></td>
+                                <td class="py-3">
+                                    <a href="order.php?productid=<?= urlencode($item['ProductID']) ?>"
+                                        class="bg-green-600 text-white text-xs px-3 py-1.5 rounded-lg hover:bg-green-700 transition font-medium">
+                                        Order
+                                    </a>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php else: ?>
+                <div class="text-center py-14 text-gray-400">
+                    <div class="text-4xl mb-3">🛒</div>
+                    <p>Your cart is empty.</p>
+                    <a href="product.php" class="text-green-600 text-sm mt-2 inline-block hover:underline">Browse Products</a>
+                </div>
+            <?php endif; ?>
+        </div>
 
-            <label for="confirm_new_password">Confirm New Password:</label><br>
-            <input type="password" name="confirm_new_password" id="confirm_new_password" required><br><br>
+        <!-- Orders -->
+        <div id="panel-orders" class="tab-panel p-6 <?= $default_tab !== 'orders' ? 'hidden' : '' ?>">
+            <h2 class="text-base font-semibold text-green-800 mb-4">Your Orders</h2>
+            <?php if ($orders): ?>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-xs text-gray-400 uppercase tracking-wide border-b border-gray-100 text-left">
+                                <th class="pb-3 pr-4 font-medium">#</th>
+                                <th class="pb-3 pr-4 font-medium">Products</th>
+                                <th class="pb-3 pr-4 font-medium">Date</th>
+                                <th class="pb-3 pr-4 font-medium">Total</th>
+                                <th class="pb-3 pr-4 font-medium">Qty</th>
+                                <th class="pb-3 pr-4 font-medium">Address</th>
+                                <th class="pb-3 font-medium">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-50">
+                            <?php foreach ($orders as $o): ?>
+                            <tr class="hover:bg-gray-50 transition">
+                                <td class="py-3 pr-4 text-gray-400 text-xs">#<?= $o['order_id'] ?></td>
+                                <td class="py-3 pr-4 font-medium text-gray-800 max-w-[160px] truncate"><?= htmlspecialchars($o['ProductNames']) ?></td>
+                                <td class="py-3 pr-4 text-gray-500 text-xs"><?= htmlspecialchars($o['Date']) ?></td>
+                                <td class="py-3 pr-4 text-green-600 font-semibold">$<?= number_format($o['Bill'], 2) ?></td>
+                                <td class="py-3 pr-4 text-gray-500"><?= (int)$o['Count'] ?></td>
+                                <td class="py-3 pr-4 text-gray-400 text-xs max-w-[120px] truncate"><?= htmlspecialchars($o['Address']) ?></td>
+                                <td class="py-3">
+                                    <?php if ($o['IsPending']): ?>
+                                        <span class="bg-yellow-100 text-yellow-700 text-xs px-2 py-1 rounded-full font-medium">Pending</span>
+                                    <?php else: ?>
+                                        <span class="bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full font-medium">Confirmed</span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php else: ?>
+                <div class="text-center py-14 text-gray-400">
+                    <div class="text-4xl mb-3">📦</div>
+                    <p>No orders yet.</p>
+                </div>
+            <?php endif; ?>
+        </div>
 
-            <input type="submit" name="change_password" value="Change Password">
-        </form>
-        <?php 
-        } else { 
-            echo "<p>You are a guest user, so the password change option is not available.</p>";
-        } 
-        ?>
+        <!-- Events -->
+        <div id="panel-events" class="tab-panel p-6 <?= $default_tab !== 'events' ? 'hidden' : '' ?>">
+            <h2 class="text-base font-semibold text-green-800 mb-4">Registered Events</h2>
+            <?php if ($events): ?>
+                <div class="space-y-3">
+                    <?php foreach ($events as $ev): ?>
+                    <div class="border border-green-100 rounded-lg p-4 flex flex-col sm:flex-row justify-between gap-3">
+                        <div>
+                            <h3 class="font-semibold text-green-800 text-sm"><?= htmlspecialchars($ev['Topic']) ?></h3>
+                            <p class="text-xs text-gray-500 mt-0.5"><?= htmlspecialchars($ev['Subject']) ?></p>
+                            <p class="text-xs text-gray-400 mt-1">📅 <?= htmlspecialchars($ev['Date']) ?></p>
+                        </div>
+                        <div class="text-right shrink-0">
+                            <span class="text-xs px-2 py-1 rounded-full <?= $ev['Type'] === 'Paid' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700' ?>">
+                                <?= $ev['Type'] === 'Paid' ? '$' . number_format($ev['Price'], 2) : 'Free' ?>
+                            </span>
+                            <p class="text-xs text-gray-400 mt-1">Registered: <?= htmlspecialchars($ev['RegistrationDate']) ?></p>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php else: ?>
+                <div class="text-center py-14 text-gray-400">
+                    <div class="text-4xl mb-3">🎓</div>
+                    <p>No events registered yet.</p>
+                    <a href="events.php" class="text-green-600 text-sm mt-2 inline-block hover:underline">Browse Events</a>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <!-- Security -->
+        <div id="panel-security" class="tab-panel p-6 <?= $default_tab !== 'security' ? 'hidden' : '' ?>">
+            <h2 class="text-base font-semibold text-green-800 mb-4">Change Password</h2>
+            <?php if ($msg): ?>
+                <div class="border-l-4 p-4 mb-5 rounded-r-lg text-sm
+                    <?= $msg_type === 'success' ? 'bg-green-50 border-green-500 text-green-800' : 'bg-red-50 border-red-500 text-red-800' ?>">
+                    <?= htmlspecialchars($msg) ?>
+                </div>
+            <?php endif; ?>
+            <?php if ($user['Type'] === 'Registered'): ?>
+                <form method="POST" class="max-w-sm space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1.5">Current Password</label>
+                        <input type="password" name="current_password" required
+                            class="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1.5">New Password</label>
+                        <input type="password" name="new_password" required
+                            class="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1.5">Confirm New Password</label>
+                        <input type="password" name="confirm_new_password" required
+                            class="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+                    </div>
+                    <button type="submit" name="change_password"
+                        class="bg-green-600 text-white px-6 py-2.5 rounded-xl hover:bg-green-700 transition text-sm font-medium">
+                        Update Password
+                    </button>
+                </form>
+            <?php else: ?>
+                <p class="text-gray-500 text-sm">Guest accounts cannot change their password.</p>
+            <?php endif; ?>
+        </div>
     </div>
+</div>
 
-    <!-- Cart Section -->
-    <div class="cart">
-        <h2>Your Cart</h2>
-        <?php if (count($cart_items) > 0) { ?>
-        <table>
-            <thead>
-                <tr>
-                    <th>Product ID</th>
-                    <th>Name</th>
-                    <th>Price</th>
-                    <th>Stock</th>
-                    <th>Added On</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($cart_items as $item) { ?>
-                <tr>
-                    <td><?php echo htmlspecialchars($item['ProductID']); ?></td>
-                    <td><?php echo htmlspecialchars($item['Name']); ?></td>
-                    <td>$<?php echo number_format($item['Price'], 2); ?></td>
-                    <td><?php echo htmlspecialchars($item['Stock']); ?></td>
-                    <td><?php echo htmlspecialchars($item['AddedOn']); ?></td>
-                    <td>
-                        <!-- Redirects to order.php with the product id -->
-                        <a href="order.php?productid=<?php echo urlencode($item['ProductID']); ?>">Order</a>
-                    </td>
-                </tr>
-                <?php } ?>
-            </tbody>
-        </table>
-        <?php } else { ?>
-            <p>Your cart is empty.</p>
-        <?php } ?>
-    </div>
+<footer class="bg-green-800 text-green-200 text-center py-6 text-sm mt-auto">
+    🌿 EcoGrow Nursery &copy; <?= date('Y') ?>
+</footer>
 
-    <!-- Confirmed Orders Section -->
-    <div class="orders">
-        <h2>Your Confirmed Orders</h2>
-        <?php if (count($orders) > 0) { ?>
-        <table>
-            <thead>
-                <tr>
-                    <th>Order ID</th>
-                    <th>Product Names</th>
-                    <th>Date</th>
-                    <th>Bill</th>
-                    <th>Count</th>
-                    <th>Address</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($orders as $order) { 
-                    // Determine status based on IsPending: 1 = Pending, 0 = Placed.
-                    $status = ($order['IsPending'] == 1) ? "Pending" : "Placed";
-                ?>
-                <tr>
-                    <td><?php echo htmlspecialchars($order['order_id']); ?></td>
-                    <td><?php echo htmlspecialchars($order['ProductNames']); ?></td>
+<script>
+function showTab(id) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+    document.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.remove('border-green-600', 'text-green-700');
+        b.classList.add('border-transparent', 'text-gray-500');
+    });
+    document.getElementById('panel-' + id).classList.remove('hidden');
+    const btn = document.getElementById('tab-' + id);
+    btn.classList.add('border-green-600', 'text-green-700');
+    btn.classList.remove('border-transparent', 'text-gray-500');
+}
+</script>
 
-                    <td><?php echo htmlspecialchars($order['Date']); ?></td>
-                    <td>$<?php echo number_format($order['Bill'], 2); ?></td>
-                    <td><?php echo htmlspecialchars($order['Count']); ?></td>
-                    <td><?php echo htmlspecialchars($order['Address']); ?></td>
-                    <td><?php echo $status; ?></td>
-                </tr>
-                <?php } ?>
-            </tbody>
-        </table>
-        <?php } else { ?>
-            <p>You have no confirmed orders.</p>
-        <?php } ?>
-    </div>
-    
-    <!-- Registered Events Section -->
-    <div class="registered-events">
-        <h2>Your Registered Events</h2>
-        <?php if (count($registered_events) > 0) { ?>
-        <table>
-            <thead>
-                <tr>
-                    <th>Event ID</th>
-                    <th>Topic</th>
-                    <th>Subject</th>
-                    <th>Event Date</th>
-                    <th>Type</th>
-                    <th>Price</th>
-                    <th>Registered On</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($registered_events as $event) { ?>
-                <tr>
-                    <td><?php echo htmlspecialchars($event['WID']); ?></td>
-                    <td><?php echo htmlspecialchars($event['Topic']); ?></td>
-                    <td><?php echo htmlspecialchars($event['Subject']); ?></td>
-                    <td><?php echo htmlspecialchars($event['Date']); ?></td>
-                    <td><?php echo htmlspecialchars($event['Type']); ?></td>
-                    <td>
-                        <?php 
-                        if($event['Type'] === 'Paid'){
-                            echo '$' . number_format($event['Price'], 2);
-                        } else {
-                            echo 'Free';
-                        }
-                        ?>
-                    </td>
-                    <td><?php echo htmlspecialchars($event['RegistrationDate']); ?></td>
-                </tr>
-                <?php } ?>
-            </tbody>
-        </table>
-        <?php } else { ?>
-            <p>You have not registered for any events yet.</p>
-        <?php } ?>
-    </div>
-
-    <!-- Navigation Buttons -->
-    <div class="navigation-buttons">
-        <button onclick="window.location.href='product.php'">Products</button>
-        <button onclick="window.location.href='events.php'">Workshops</button>
-    </div>
-
-    <!-- Logout Button -->
-    <form method="post" action="">
-        <input type="submit" name="logout" value="Logout">
-    </form>
+<?php $conn->close(); ?>
 </body>
 </html>
-
-<?php
-$mysqli->close();
-?>

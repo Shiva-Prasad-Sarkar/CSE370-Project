@@ -1,340 +1,180 @@
 <?php
 session_start();
+require_once 'config.php';
+require_once 'includes/flash.php';
+
 $loggedIn = isset($_SESSION['customer_id']);
+
+// Build safe query with prepared statements
+$sql    = "SELECT p.ID, p.Name, p.Category, p.SubType, p.Price, p.Stock, p.Details, pp.Photo
+           FROM Products p LEFT JOIN product_photos pp ON p.ID = pp.ProductID";
+$where  = [];
+$params = [];
+$types  = '';
+
+if (!empty($_GET['category'])) {
+    $where[]  = "p.Category = ?";
+    $params[] = $_GET['category'];
+    $types   .= 's';
+}
+if (!empty($_GET['search'])) {
+    $where[]  = "p.Name LIKE ?";
+    $params[] = '%' . $_GET['search'] . '%';
+    $types   .= 's';
+}
+if ($where) {
+    $sql .= " WHERE " . implode(" AND ", $where);
+}
+
+$allowed_sorts = [
+    'name_asc'   => 'p.Name ASC',
+    'name_desc'  => 'p.Name DESC',
+    'price_asc'  => 'p.Price ASC',
+    'price_desc' => 'p.Price DESC',
+];
+if (!empty($_GET['sort']) && isset($allowed_sorts[$_GET['sort']])) {
+    $sql .= " ORDER BY " . $allowed_sorts[$_GET['sort']];
+}
+if (!empty($_GET['limit']) && ctype_digit($_GET['limit'])) {
+    $sql .= " LIMIT " . (int)$_GET['limit'];
+}
+
+if ($params) {
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $result = $stmt->get_result();
+} else {
+    $result = $conn->query($sql);
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>EcoGrow Products</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    :root {
-      --green-dark: #2f5d50;
-      --green-medium: #4caf50;
-      --green-light: #a8d5ba;
-      --bg-light: rgb(147, 221, 131);
-      --text-dark: #1b4332;
-      --text-light: #555;
-      --card-shadow: 0 12px 24px rgba(0, 0, 0, 0.08);
-    }
-    
-    * {
-      box-sizing: border-box;
-      font-family: 'Segoe UI', sans-serif;
-      margin: 0;
-      padding: 0;
-    }
-    
-    body {
-      background-color: var(--bg-light);
-      padding: 40px 5%;
-    }
-    
-    header {
-      position: relative;
-      padding: 20px 0;
-      text-align: center;
-    }
-    
-    /* Navigation buttons on the top-left */
-    .nav-left {
-      position: absolute;
-      top: 20px;
-      left: 20px;
-    }
-    .nav-btn {
-      background: var(--green-dark);
-      color: #fff;
-      padding: 6px 12px;
-      text-decoration: none;
-      border-radius: 6px;
-      margin-right: 10px;
-      font-size: 1rem;
-    }
-    
-    header h1 {
-      text-align: center;
-      color: var(--green-dark);
-      font-size: 3rem;
-      margin-bottom: 20px;
-    }
-    
-    .profile-btn {
-      position: absolute;
-      top: 20px;
-      right: 20px;
-      padding: 8px 12px;
-      border: none;
-      border-radius: 6px;
-      background: var(--green-dark);
-      color: #fff;
-      cursor: pointer;
-    }
-    
-    .filter-bar {
-      margin-bottom: 30px;
-    }
-    
-    .filter-form {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    
-    .filter-left select,
-    .filter-left input[type="submit"] {
-      padding: 8px;
-      border-radius: 6px;
-      border: 1px solid #ccc;
-    }
-    
-    .filter-right {
-      margin-left: auto;
-    }
-    
-    .filter-right input[type="text"] {
-      padding: 8px;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-      min-width: 250px;
-    }
-    
-    .product-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 30px;
-    }
-    
-    .product-card {
-      background: #fff;
-      border-radius: 16px;
-      overflow: hidden;
-      box-shadow: var(--card-shadow);
-      transition: transform 0.3s ease, box-shadow 0.3s ease;
-      display: flex;
-      flex-direction: column;
-      padding-bottom: 10px;
-    }
-    
-    .product-card:hover {
-      transform: translateY(-6px);
-      box-shadow: 0 16px 32px rgba(0, 0, 0, 0.12);
-    }
-    
-    .product-card img {
-      width: 100%;
-      height: 200px;
-      object-fit: cover;
-    }
-    
-    .product-info {
-      padding: 16px 20px;
-      flex: 1;
-    }
-    
-    .product-info h2 {
-      font-size: 1.4rem;
-      color: var(--text-dark);
-      margin-bottom: 8px;
-    }
-    
-    .price {
-      font-size: 1.2rem;
-      font-weight: bold;
-      color: var(--green-medium);
-      margin-bottom: 10px;
-    }
-    
-    .description {
-      font-size: 0.95rem;
-      color: var(--text-light);
-      margin-bottom: 12px;
-    }
-    
-    .product-meta {
-      font-size: 0.85rem;
-      color: #444;
-      margin-bottom: 5px;
-    }
-    
-    .out-of-stock-msg {
-      color: red;
-      font-weight: bold;
-      margin: 10px 0;
-      font-size: 0.95rem;
-    }
-    
-    .add-to-cart-btn {
-      padding: 8px 12px;
-      margin: 10px 20px 0;
-      border: none;
-      border-radius: 6px;
-      background: var(--green-medium);
-      color: #fff;
-      cursor: pointer;
-      font-size: 1rem;
-    }
-    
-    .add-to-cart-btn:hover {
-      background: #3e8e41;
-    }
-    
-    footer {
-      margin-top: 60px;
-      text-align: center;
-      font-size: 0.9rem;
-      color: #888;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Products — EcoGrow</title>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-  <header>
-    <!-- Navigation Buttons on the left -->
-    <div class="nav-left">
-      <a href="index.php" class="nav-btn">Home</a>
-      <a href="events.php" class="nav-btn">Workshop</a>
+<body class="bg-green-50 min-h-screen flex flex-col">
+<?php require_once 'includes/navbar.php'; ?>
+
+<div class="bg-green-700 text-white py-10 px-4">
+    <div class="max-w-7xl mx-auto">
+        <h1 class="text-3xl font-bold">🌿 Our Products</h1>
+        <p class="text-green-200 mt-1 text-sm">Plants, accessories, and everything you need to grow</p>
     </div>
-    <h1>🌿 Explore EcoGrow Products</h1>
-    <?php if ($loggedIn): ?>
-      <button class="profile-btn" type="button" onclick="location.href='user.php'">My Profile</button>
-    <?php endif; ?>
-  </header>
-  
-  <div class="filter-bar">
-    <form action="" method="get" class="filter-form">
-      <div class="filter-left">
-        <select name="sort">
-          <option value="">Sort By</option>
-          <option value="name_asc" <?php if(isset($_GET['sort']) && $_GET['sort'] == 'name_asc') echo 'selected'; ?>>Name Ascending</option>
-          <option value="name_desc" <?php if(isset($_GET['sort']) && $_GET['sort'] == 'name_desc') echo 'selected'; ?>>Name Descending</option>
-          <option value="price_asc" <?php if(isset($_GET['sort']) && $_GET['sort'] == 'price_asc') echo 'selected'; ?>>Price Low to High</option>
-          <option value="price_desc" <?php if(isset($_GET['sort']) && $_GET['sort'] == 'price_desc') echo 'selected'; ?>>Price High to Low</option>
-        </select>
-        
-        <select name="category">
-          <option value="">Filter by Category</option>
-          <option value="Indoor" <?php if(isset($_GET['category']) && $_GET['category'] == 'Indoor') echo 'selected'; ?>>Indoor</option>
-          <option value="Outdoor" <?php if(isset($_GET['category']) && $_GET['category'] == 'Outdoor') echo 'selected'; ?>>Outdoor</option>
-        </select>
-        
-        <select name="limit">
-          <option value="">Limit Results</option>
-          <option value="5" <?php if(isset($_GET['limit']) && $_GET['limit'] == '5') echo 'selected'; ?>>5</option>
-          <option value="10" <?php if(isset($_GET['limit']) && $_GET['limit'] == '10') echo 'selected'; ?>>10</option>
-          <option value="15" <?php if(isset($_GET['limit']) && $_GET['limit'] == '15') echo 'selected'; ?>>15</option>
-          <option value="20" <?php if(isset($_GET['limit']) && $_GET['limit'] == '20') echo 'selected'; ?>>20</option>
-          <option value="25" <?php if(isset($_GET['limit']) && $_GET['limit'] == '25') echo 'selected'; ?>>25</option>
-          <option value="30" <?php if(isset($_GET['limit']) && $_GET['limit'] == '30') echo 'selected'; ?>>30</option>
-          <option value="40" <?php if(isset($_GET['limit']) && $_GET['limit'] == '40') echo 'selected'; ?>>40</option>
-        </select>
-        
-        <input type="submit" value="Apply">
-      </div>
-      <div class="filter-right">
-        <input type="text" name="search" placeholder="Search products by name" 
-               value="<?php echo isset($_GET['search']) ? htmlspecialchars($_GET['search']) : ''; ?>">
-      </div>
+</div>
+
+<div class="max-w-7xl mx-auto px-4 py-8 flex-1 w-full">
+    <?php render_flash(); ?>
+
+    <!-- Filter Bar -->
+    <form method="GET" class="bg-white rounded-xl shadow-sm border border-green-100 p-4 mb-8">
+        <div class="flex flex-wrap gap-3 items-end">
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Category</label>
+                <select name="category" class="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+                    <option value="">All</option>
+                    <option value="Plants" <?= ($_GET['category'] ?? '') === 'Plants' ? 'selected' : '' ?>>Plants</option>
+                    <option value="Accessories" <?= ($_GET['category'] ?? '') === 'Accessories' ? 'selected' : '' ?>>Accessories</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Sort</label>
+                <select name="sort" class="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+                    <option value="">Default</option>
+                    <option value="name_asc"   <?= ($_GET['sort'] ?? '') === 'name_asc'   ? 'selected' : '' ?>>Name A–Z</option>
+                    <option value="name_desc"  <?= ($_GET['sort'] ?? '') === 'name_desc'  ? 'selected' : '' ?>>Name Z–A</option>
+                    <option value="price_asc"  <?= ($_GET['sort'] ?? '') === 'price_asc'  ? 'selected' : '' ?>>Price ↑</option>
+                    <option value="price_desc" <?= ($_GET['sort'] ?? '') === 'price_desc' ? 'selected' : '' ?>>Price ↓</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Show</label>
+                <select name="limit" class="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+                    <option value="">All</option>
+                    <?php foreach ([5, 10, 20, 30] as $l): ?>
+                        <option value="<?= $l ?>" <?= ($_GET['limit'] ?? '') == $l ? 'selected' : '' ?>><?= $l ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="flex-1 min-w-[200px]">
+                <label class="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Search</label>
+                <input type="text" name="search" placeholder="Search by name..."
+                    value="<?= htmlspecialchars($_GET['search'] ?? '') ?>"
+                    class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+            </div>
+            <button type="submit" class="bg-green-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition">
+                Apply
+            </button>
+            <?php if (!empty(array_filter($_GET))): ?>
+                <a href="product.php" class="text-gray-400 text-sm hover:text-gray-600 py-2">Clear</a>
+            <?php endif; ?>
+        </div>
     </form>
-  </div>
-  
-  <section class="product-grid">
-    <?php
-    // Connect to the database
-    $conn = new mysqli("localhost", "root", "", "ecogrow");
-    if ($conn->connect_error) {
-      die("Connection failed: " . $conn->connect_error);
-    }
-    
-    // Build the base query
-    $sql = "SELECT products.ID, Name, Category, SubType, Price, Stock, Ratings, Details, product_photos.Photo 
-            FROM products 
-            LEFT JOIN product_photos ON products.ID = product_photos.ProductID";
-    
-    $whereClauses = [];
-    
-    // Apply category filter if set
-    if (isset($_GET['category']) && $_GET['category'] != '') {
-      $category = $conn->real_escape_string($_GET['category']);
-      $whereClauses[] = "Category = '$category'";
-    }
-    
-    // Apply search filter if set
-    if (isset($_GET['search']) && $_GET['search'] != '') {
-      $search = $conn->real_escape_string($_GET['search']);
-      $whereClauses[] = "Name LIKE '%$search%'";
-    }
-    
-    if (count($whereClauses) > 0) {
-      $sql .= " WHERE " . implode(" AND ", $whereClauses);
-    }
-    
-    // Sorting
-    if (isset($_GET['sort'])) {
-      switch ($_GET['sort']) {
-        case 'name_asc': 
-          $sql .= " ORDER BY Name ASC"; 
-          break;
-        case 'name_desc': 
-          $sql .= " ORDER BY Name DESC"; 
-          break;
-        case 'price_asc': 
-          $sql .= " ORDER BY Price ASC"; 
-          break;
-        case 'price_desc': 
-          $sql .= " ORDER BY Price DESC"; 
-          break;
-      }
-    }
-    
-    // Limit
-    if (isset($_GET['limit']) && is_numeric($_GET['limit'])) {
-      $limit = (int)$_GET['limit'];
-      $sql .= " LIMIT $limit";
-    }
-    
-    $result = $conn->query($sql);
-    
-    if ($result && $result->num_rows > 0) {
-      while ($row = $result->fetch_assoc()) {
-        echo "<div class='product-card'>";
-        if (!empty($row['Photo'])) {
-          echo "<img src='" . htmlspecialchars($row['Photo']) . "' alt='Product Image'>";
-        } else {
-          echo "<img src='default_image.jpg' alt='Default Image'>";
-        }
-        echo "<div class='product-info'>";
-        echo "<h2>" . htmlspecialchars($row['Name']) . "</h2>";
-        echo "<p class='price'>$" . number_format($row['Price'], 2) . "</p>";
-        echo "<p class='description'>" . htmlspecialchars($row['Details']) . "</p>";
-        echo "<p class='product-meta'>Category: " . htmlspecialchars($row['Category']) . "</p>";
-        echo "<p class='product-meta'>SubType: " . htmlspecialchars($row['SubType']) . "</p>";
-        if ($row['Stock'] <= 0) {
-          echo "<p class='out-of-stock-msg'>Out of Stock</p>";
-        }
-        
-        // Display an Add to Cart button if the user is logged in
-        if ($loggedIn) {
-          echo "<form action='add_to_cart.php' method='post'>";
-          echo "<input type='hidden' name='product_id' value='" . htmlspecialchars($row['ID']) . "'>";
-          echo "<button type='submit' class='add-to-cart-btn'>Add to Cart</button>";
-          echo "</form>";
-        } else {
-          echo "<button type='button' class='add-to-cart-btn' onclick=\"alert('Please login/register to order.');\">Add to Cart</button>";
-        }
-        echo "</div></div>";
-      }
-    } else {
-      echo "No products found.";
-    }
-    
-    $conn->close();
-    ?>
-  </section>
-  
-  <footer>
-    <p>EcoGrow &copy; 2025 | All Rights Reserved</p>
-  </footer>
+
+    <!-- Grid -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <?php if ($result && $result->num_rows > 0): ?>
+            <?php while ($row = $result->fetch_assoc()): ?>
+            <div class="bg-white rounded-xl shadow-sm border border-green-100 overflow-hidden hover:shadow-md transition flex flex-col">
+                <?php if (!empty($row['Photo'])): ?>
+                    <img src="<?= htmlspecialchars($row['Photo']) ?>"
+                         alt="<?= htmlspecialchars($row['Name']) ?>"
+                         class="w-full h-48 object-cover">
+                <?php else: ?>
+                    <div class="w-full h-48 bg-green-100 flex items-center justify-center text-5xl">🌿</div>
+                <?php endif; ?>
+
+                <div class="p-4 flex flex-col flex-1">
+                    <div class="flex items-start justify-between mb-2 gap-2">
+                        <h3 class="font-semibold text-green-800 text-sm leading-snug"><?= htmlspecialchars($row['Name']) ?></h3>
+                        <span class="shrink-0 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full"><?= htmlspecialchars($row['Category']) ?></span>
+                    </div>
+                    <p class="text-xl font-bold text-green-600 mb-2">$<?= number_format($row['Price'], 2) ?></p>
+                    <p class="text-xs text-gray-400 mb-1">Type: <?= htmlspecialchars($row['SubType']) ?></p>
+                    <p class="text-xs text-gray-500 mb-3 flex-1 leading-relaxed">
+                        <?= htmlspecialchars(mb_substr($row['Details'], 0, 80)) ?><?= mb_strlen($row['Details']) > 80 ? '…' : '' ?>
+                    </p>
+
+                    <?php if ($row['Stock'] <= 0): ?>
+                        <span class="text-xs text-red-500 font-semibold mb-2 block">Out of Stock</span>
+                    <?php else: ?>
+                        <p class="text-xs text-gray-400 mb-3"><?= $row['Stock'] ?> in stock</p>
+                    <?php endif; ?>
+
+                    <?php if ($loggedIn && $row['Stock'] > 0): ?>
+                        <form method="POST" action="add_to_cart.php">
+                            <input type="hidden" name="product_id" value="<?= (int)$row['ID'] ?>">
+                            <button type="submit"
+                                class="w-full bg-green-600 text-white text-sm py-2 rounded-lg hover:bg-green-700 transition font-medium">
+                                Add to Cart
+                            </button>
+                        </form>
+                    <?php elseif (!$loggedIn): ?>
+                        <a href="login.php"
+                            class="w-full block text-center bg-gray-100 text-gray-500 text-sm py-2 rounded-lg hover:bg-gray-200 transition">
+                            Login to Buy
+                        </a>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <?php endwhile; ?>
+        <?php else: ?>
+            <div class="col-span-4 text-center py-20 text-gray-400">
+                <div class="text-5xl mb-4">🔍</div>
+                <p class="text-lg">No products match your criteria.</p>
+                <a href="product.php" class="text-green-600 text-sm mt-2 inline-block hover:underline">Clear filters</a>
+            </div>
+        <?php endif; ?>
+    </div>
+</div>
+
+<footer class="bg-green-800 text-green-200 text-center py-6 text-sm mt-auto">
+    🌿 EcoGrow Nursery &copy; <?= date('Y') ?> — Growing Together
+</footer>
+
+<?php $conn->close(); ?>
 </body>
 </html>

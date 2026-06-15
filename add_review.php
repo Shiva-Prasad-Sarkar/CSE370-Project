@@ -1,35 +1,25 @@
 <?php
 session_start();
+require_once 'config.php';
+require_once 'includes/flash.php';
 
-// Ensure that the user is logged in.
 if (!isset($_SESSION['customer_id'])) {
-    header("Location: index.php");
+    header("Location: login.php");
     exit;
 }
 
-// Establish a database connection.
-$conn = new mysqli("localhost", "root", "", "ecogrow");
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
-}
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty(trim($_POST['review'] ?? ''))) {
+    $customer_id = (int)$_SESSION['customer_id'];
+    $review      = trim($_POST['review']);
 
-// Check if the review was submitted.
-if (isset($_POST['review'])) {
-    // Sanitize the review input.
-    $review = $conn->real_escape_string($_POST['review']);
-    $customer_id = $_SESSION['customer_id'];
+    $stmt = $conn->prepare("INSERT INTO Customers_Reviews (CustomerID, Comments) VALUES (?, ?)");
+    $stmt->bind_param("is", $customer_id, $review);
+    $stmt->execute();
+    $stmt->close();
 
-    // Insert the review into the Customers_Reviews table.
-    $sql = "INSERT INTO Customers_Reviews (CustomerID, Comments) VALUES ('$customer_id', '$review')";
-
-    if ($conn->query($sql) === TRUE) {
-        // Redirect back to index.php after a successful insert.
-        header("Location: index.php");
-        exit;
-    } else {
-        echo "Error: " . $sql . "<br>" . $conn->error;
-    }
+    set_flash('success', 'Thank you for your review!');
 }
 
 $conn->close();
-?>
+header("Location: index.php");
+exit;

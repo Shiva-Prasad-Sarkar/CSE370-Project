@@ -96,8 +96,8 @@ if (isset($_POST['create_workshop'])) {
         $s=$conn->prepare("INSERT INTO workshops (Topic,Subject,Date,Type,CreatedBy,Points,Price) VALUES(?,?,?,?,?,?,?)");
         $s->bind_param("ssssiid",$topic,$subj,$date,$type,$admin_id,$wpts,$wprice); $s->execute();
         $wid=(int)$conn->insert_id; $s->close();
-        $br=trim($_POST['branches']??'');
-        if ($br!=='') { $bids=array_filter(array_map('intval',explode(',',$br))); $s2=$conn->prepare("INSERT INTO workshops_branches (WorkshopID,BranchID) VALUES(?,?)"); foreach($bids as $bid){$s2->bind_param("ii",$wid,$bid);$s2->execute();} $s2->close(); }
+        $bids=array_filter(array_map('intval',$_POST['branch_ids']??[]));
+        if ($bids) { $s2=$conn->prepare("INSERT INTO workshops_branches (WorkshopID,BranchID) VALUES(?,?)"); foreach($bids as $bid){$s2->bind_param("ii",$wid,$bid);$s2->execute();} $s2->close(); }
         header("Location: admin_dashboard.php?tab=workshops&msg=workshop_created"); exit;
     }
 }
@@ -110,6 +110,10 @@ if (isset($_POST['edit_workshop'])) {
     $pr=($_POST['ew_price']!==''&&$_POST['ew_price']!==null)?(float)$_POST['ew_price']:null;
     $s=$conn->prepare("UPDATE workshops SET Topic=?,Subject=?,Date=?,Type=?,Points=?,Price=? WHERE WID=?");
     $s->bind_param("ssssiid",$topic,$subj,$date,$type,$pts,$pr,$wid); $s->execute(); $s->close();
+    // Sync branch assignments
+    $d=$conn->prepare("DELETE FROM workshops_branches WHERE WorkshopID=?"); $d->bind_param("i",$wid); $d->execute(); $d->close();
+    $ebids=array_filter(array_map('intval',$_POST['ew_branch_ids']??[]));
+    if ($ebids){$s2=$conn->prepare("INSERT INTO workshops_branches (WorkshopID,BranchID) VALUES(?,?)");foreach($ebids as $bid){$s2->bind_param("ii",$wid,$bid);$s2->execute();}$s2->close();}
     header("Location: admin_dashboard.php?tab=workshops&msg=workshop_updated"); exit;
 }
 
@@ -187,6 +191,13 @@ if (isset($_POST['delete_review'])) {
     header("Location: admin_dashboard.php?tab=reviews&msg=review_deleted"); exit;
 }
 
+// ─── Mark contact message as read ───
+if (isset($_POST['mark_msg_read'])) {
+    $mid=(int)$_POST['msg_id'];
+    $conn->query("UPDATE contact_messages SET is_read=1 WHERE id=$mid");
+    header("Location: admin_dashboard.php?tab=overview"); exit;
+}
+
 // ─── Redirect messages ───
 $msg_map=[
     'confirmed'=>['success','Order confirmed — status set to Processing.'],
@@ -259,8 +270,10 @@ $all_customers=$conn->query(
 // ─── Workshops ───
 $all_workshops=$conn->query(
     "SELECT w.WID,w.Topic,w.Subject,w.Date,w.Type,w.Price,w.Points,
-            (SELECT COUNT(*) FROM customers_workshops cw WHERE cw.WorkshopID=w.WID) AS Attendees
-     FROM workshops w ORDER BY w.Date DESC"
+            (SELECT COUNT(*) FROM customers_workshops cw WHERE cw.WorkshopID=w.WID) AS Attendees,
+            GROUP_CONCAT(wb.BranchID ORDER BY wb.BranchID) AS BranchIDs
+     FROM workshops w LEFT JOIN workshops_branches wb ON w.WID=wb.WorkshopID
+     GROUP BY w.WID ORDER BY w.Date DESC"
 )->fetch_all(MYSQLI_ASSOC);
 
 // ─── Branches ───
@@ -281,6 +294,18 @@ $approved_reviews=$conn->query(
      FROM customers_reviews cr JOIN customers c ON cr.CustomerID=c.ID
      WHERE cr.approved=1 ORDER BY cr.ID DESC LIMIT 50"
 )->fetch_all(MYSQLI_ASSOC);
+
+// ─── Low-stock products (stock < 5) ───
+$low_stock=$conn->query("SELECT ID,Name,Stock FROM products WHERE Stock < 5 ORDER BY Stock ASC LIMIT 10")->fetch_all(MYSQLI_ASSOC);
+
+// ─── Contact messages ───
+$contact_messages=[];
+$cm_count=0;
+$cm_res=$conn->query("SHOW TABLES LIKE 'contact_messages'");
+if($cm_res && $cm_res->num_rows>0){
+    $cm_count=(int)$conn->query("SELECT COUNT(*) c FROM contact_messages WHERE is_read=0")->fetch_assoc()['c'];
+    $contact_messages=$conn->query("SELECT * FROM contact_messages ORDER BY CreatedAt DESC LIMIT 20")->fetch_all(MYSQLI_ASSOC);
+}
 
 $status_colors=['Placed'=>'bg-gray-100 text-gray-600','Processing'=>'bg-blue-100 text-blue-700','Shipped'=>'bg-amber-100 text-amber-700','Delivered'=>'bg-green-100 text-green-700'];
 ?>
@@ -429,6 +454,68 @@ $status_colors=['Placed'=>'bg-gray-100 text-gray-600','Processing'=>'bg-blue-100
                 <div class="text-center py-10 text-gray-400"><div class="text-4xl mb-2">✅</div><p class="text-sm">All orders confirmed.</p></div>
                 <?php endif;?>
             </div>
+
+            <!-- Low-stock alert -->
+            <?php if($low_stock):?>
+            <div class="bg-white rounded-xl border border-amber-200 shadow-sm p-5 mt-5">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-sm font-semibold text-gray-700">⚠️ Low Stock Alert</h2>
+                    <span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium"><?=count($low_stock)?> products</span>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <?php foreach($low_stock as $ls):
+                        $ls_out  = $ls['Stock'] <= 0;
+                        $ls_icon = $ls_out ? '🔴' : '🟡';
+                        $ls_clr  = $ls_out ? 'text-red-600' : 'text-amber-600';
+                        $ls_txt  = $ls_out ? 'Out of stock' : $ls['Stock'] . ' left';
+                    ?>
+                    <div onclick="setTab('products')" class="cursor-pointer flex items-center gap-2 border border-amber-100 bg-amber-50 rounded-lg px-3 py-2 hover:bg-amber-100 transition">
+                        <span class="text-lg"><?=$ls_icon?></span>
+                        <div>
+                            <p class="text-xs font-semibold text-gray-800"><?=htmlspecialchars(mb_substr($ls['Name'],0,20))?></p>
+                            <p class="text-xs font-medium <?=$ls_clr?>"><?=$ls_txt?></p>
+                        </div>
+                    </div>
+                    <?php endforeach;?>
+                </div>
+            </div>
+            <?php endif;?>
+
+            <!-- Contact messages -->
+            <?php if($contact_messages):?>
+            <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mt-5">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-sm font-semibold text-gray-700">📬 Contact Messages</h2>
+                    <?php if($cm_count>0):?>
+                    <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium"><?=$cm_count?> unread</span>
+                    <?php endif;?>
+                </div>
+                <div class="space-y-3">
+                    <?php foreach($contact_messages as $cm):?>
+                    <div class="border border-gray-100 rounded-xl p-4 <?=empty($cm['is_read'])?'bg-blue-50 border-blue-100':''?>">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2 flex-wrap mb-1">
+                                    <span class="font-semibold text-gray-800 text-sm"><?=htmlspecialchars($cm['Name'])?></span>
+                                    <span class="text-xs text-gray-400"><?=htmlspecialchars($cm['Email'])?></span>
+                                    <span class="text-xs text-gray-400">· <?=date('M j, Y',strtotime($cm['CreatedAt']))?></span>
+                                    <?php if(empty($cm['is_read'])):?><span class="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-medium">New</span><?php endif;?>
+                                </div>
+                                <p class="text-xs font-semibold text-gray-700 mb-1"><?=htmlspecialchars($cm['Subject'])?></p>
+                                <p class="text-xs text-gray-500 leading-relaxed"><?=htmlspecialchars(mb_substr($cm['Message'],0,150))?><?=mb_strlen($cm['Message'])>150?'…':''?></p>
+                            </div>
+                            <?php if(empty($cm['is_read'])):?>
+                            <form method="POST" class="shrink-0">
+                                <input type="hidden" name="msg_id" value="<?=(int)$cm['id']?>">
+                                <button name="mark_msg_read" class="text-xs text-blue-500 hover:text-blue-700 font-medium whitespace-nowrap">Mark read</button>
+                            </form>
+                            <?php endif;?>
+                        </div>
+                    </div>
+                    <?php endforeach;?>
+                </div>
+            </div>
+            <?php endif;?>
         </div>
 
         <!-- ══════ TAB: ORDERS ══════ -->
@@ -599,9 +686,18 @@ $status_colors=['Placed'=>'bg-gray-100 text-gray-600','Processing'=>'bg-blue-100
                     </select>
                     <input type="number" name="points" placeholder="Points (Paid only)" class="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
                     <input type="number" step="0.01" name="price_workshop" placeholder="Price $ (Paid only)" class="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
-                    <div class="col-span-full text-xs text-gray-400">Branches: <?php foreach($all_branches as $b):?><span class="bg-gray-100 rounded px-1 mr-1 font-mono"><?=$b['ID']?>:<?=htmlspecialchars($b['Name'])?></span><?php endforeach;?></div>
-                    <input type="text" name="branches" placeholder="Branch IDs e.g. 1,2" class="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
-                    <button type="submit" name="create_workshop" class="bg-green-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition">Create Workshop</button>
+                    <div class="col-span-full">
+                        <p class="text-xs font-medium text-gray-600 mb-2">Assign to Branches <span class="text-gray-400 font-normal">(optional)</span></p>
+                        <div class="flex flex-wrap gap-x-5 gap-y-2">
+                            <?php foreach($all_branches as $b):?>
+                            <label class="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
+                                <input type="checkbox" name="branch_ids[]" value="<?=(int)$b['ID']?>" class="accent-green-600 w-4 h-4">
+                                <?=htmlspecialchars($b['Name'])?>
+                            </label>
+                            <?php endforeach;?>
+                        </div>
+                    </div>
+                    <button type="submit" name="create_workshop" class="col-span-full bg-green-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition">Create Workshop</button>
                 </form>
             </div>
             <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
@@ -623,7 +719,7 @@ $status_colors=['Placed'=>'bg-gray-100 text-gray-600','Processing'=>'bg-blue-100
                             <td class="py-3 pr-4 text-xs font-semibold <?=$w['Type']==='Paid'?'text-green-600':'text-gray-400'?>"><?=$w['Type']==='Paid'?'$'.number_format($w['Price'],2):'Free'?></td>
                             <td class="py-3 pr-4 text-gray-600"><?=(int)$w['Attendees']?></td>
                             <td class="py-3 pr-4">
-                                <button onclick="openEditWorkshop(<?=$w['WID']?>,<?=htmlspecialchars(json_encode($w['Topic']))?>,<?=htmlspecialchars(json_encode($w['Subject']??''))?>,<?=htmlspecialchars(json_encode($w['Date']??''))?>,<?=htmlspecialchars(json_encode($w['Type']))?>,<?=(int)($w['Points']??0)?>,<?=(float)($w['Price']??0)?>)"
+                                <button onclick="openEditWorkshop(<?=$w['WID']?>,<?=htmlspecialchars(json_encode($w['Topic']))?>,<?=htmlspecialchars(json_encode($w['Subject']??''))?>,<?=htmlspecialchars(json_encode($w['Date']??''))?>,<?=htmlspecialchars(json_encode($w['Type']))?>,<?=(int)($w['Points']??0)?>,<?=(float)($w['Price']??0)?>,<?=htmlspecialchars(json_encode($w['BranchIDs']??''))?>)"
                                     class="bg-amber-100 text-amber-700 text-xs px-2 py-1 rounded hover:bg-amber-200 transition font-medium">Edit</button>
                             </td>
                             <td class="py-3">
@@ -861,6 +957,17 @@ $status_colors=['Placed'=>'bg-gray-100 text-gray-600','Processing'=>'bg-blue-100
                 <input type="number" name="ew_points" id="ew_points" placeholder="Points (Paid)" class="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
                 <input type="number" step="0.01" name="ew_price" id="ew_price" placeholder="Price $ (Paid)" class="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
             </div>
+            <div>
+                <p class="text-xs font-medium text-gray-600 mb-2">Branches</p>
+                <div class="flex flex-wrap gap-x-5 gap-y-2" id="ew_branch_list">
+                    <?php foreach($all_branches as $b):?>
+                    <label class="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
+                        <input type="checkbox" name="ew_branch_ids[]" value="<?=(int)$b['ID']?>" class="ew-branch-cb accent-green-600 w-4 h-4">
+                        <?=htmlspecialchars($b['Name'])?>
+                    </label>
+                    <?php endforeach;?>
+                </div>
+            </div>
             <div class="flex gap-3 pt-1">
                 <button type="submit" name="edit_workshop" class="flex-1 bg-green-600 text-white py-2.5 rounded-xl hover:bg-green-700 transition font-medium text-sm">Save Changes</button>
                 <button type="button" onclick="closeModal('modal-edit-workshop')" class="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl hover:bg-gray-200 transition font-medium text-sm">Cancel</button>
@@ -918,7 +1025,7 @@ function openEditProduct(id, name, cat, sub, price, stock, details, photo) {
     document.getElementById('modal-edit-product').classList.remove('hidden');
 }
 
-function openEditWorkshop(id, topic, subject, date, type, points, price) {
+function openEditWorkshop(id, topic, subject, date, type, points, price, branchIds) {
     document.getElementById('ew_id').value = id;
     document.getElementById('ew_topic').value = topic;
     document.getElementById('ew_subject').value = subject;
@@ -926,6 +1033,10 @@ function openEditWorkshop(id, topic, subject, date, type, points, price) {
     document.getElementById('ew_type').value = type;
     document.getElementById('ew_points').value = points || '';
     document.getElementById('ew_price').value = price || '';
+    const checked = branchIds ? branchIds.split(',').map(Number) : [];
+    document.querySelectorAll('.ew-branch-cb').forEach(cb => {
+        cb.checked = checked.includes(parseInt(cb.value));
+    });
     document.getElementById('modal-edit-workshop').classList.remove('hidden');
 }
 

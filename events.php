@@ -9,7 +9,7 @@ $sql = "SELECT w.WID, w.Topic, w.Subject, w.Date, w.Type, w.Points, w.Price,
                GROUP_CONCAT(DISTINCT b.Name SEPARATOR ', ') AS BranchNames,
                (SELECT COUNT(*) FROM customers_workshops cw WHERE cw.WorkshopID = w.WID) AS Attendees
         FROM workshops w
-        INNER JOIN workshops_branches wb ON w.WID = wb.WorkshopID
+        LEFT JOIN workshops_branches wb ON w.WID = wb.WorkshopID
         LEFT JOIN branches b ON wb.BranchID = b.ID";
 
 if ($filter === 'free') $sql .= " WHERE w.Type = 'Free'";
@@ -20,6 +20,14 @@ $result = $conn->query($sql);
 $workshops = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
 
 $today = date('Y-m-d');
+
+// Find which workshops the logged-in customer is already registered for
+$registered_ids = [];
+if (isset($_SESSION['customer_id'])) {
+    $cid = (int)$_SESSION['customer_id'];
+    $rr = $conn->query("SELECT WorkshopID FROM customers_workshops WHERE CustomerID = $cid");
+    if ($rr) while ($rrow = $rr->fetch_assoc()) $registered_ids[] = (int)$rrow['WorkshopID'];
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -56,8 +64,9 @@ $today = date('Y-m-d');
     <?php if($workshops):?>
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <?php foreach($workshops as $row):
-            $isPast    = $row['Date'] < $today;
-            $isToday   = $row['Date'] === $today;
+            $isPast      = $row['Date'] < $today;
+            $isToday     = $row['Date'] === $today;
+            $isRegistered = in_array((int)$row['WID'], $registered_ids);
         ?>
         <div class="bg-white rounded-2xl shadow-sm border border-green-100 overflow-hidden hover:shadow-md transition flex flex-col <?=$isPast?'opacity-70':''?>">
             <!-- Color band -->
@@ -96,6 +105,8 @@ $today = date('Y-m-d');
                 <div class="mt-auto">
                     <?php if($isPast):?>
                         <span class="block text-center bg-gray-100 text-gray-400 text-sm py-2.5 rounded-xl font-medium">Event Ended</span>
+                    <?php elseif($isRegistered):?>
+                        <span class="block text-center bg-green-50 border border-green-200 text-green-700 text-sm py-2.5 rounded-xl font-semibold">✓ You're Registered</span>
                     <?php elseif(isset($_SESSION['customer_id'])):?>
                         <a href="registerevents.php?event_id=<?=(int)$row['WID']?>"
                             class="block text-center bg-green-600 text-white text-sm py-2.5 rounded-xl hover:bg-green-700 transition font-semibold shadow-sm">

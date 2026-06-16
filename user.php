@@ -9,6 +9,29 @@ $user_id  = $_SESSION['customer_id'];
 $msg      = '';
 $msg_type = '';
 
+// Handle profile update
+if (isset($_POST['update_profile'])) {
+    $new_name  = trim($_POST['profile_name'] ?? '');
+    $new_email = trim($_POST['profile_email'] ?? '');
+    if (empty($new_name) || empty($new_email)) {
+        $msg = 'Name and email cannot be empty.'; $msg_type = 'error';
+    } elseif (!filter_var($new_email, FILTER_VALIDATE_EMAIL)) {
+        $msg = 'Please enter a valid email address.'; $msg_type = 'error';
+    } else {
+        $chk = $conn->prepare("SELECT ID FROM customers WHERE Email=? AND ID!=?");
+        $chk->bind_param("si",$new_email,$user_id); $chk->execute();
+        if ($chk->get_result()->num_rows > 0) {
+            $msg = 'That email is already used by another account.'; $msg_type = 'error';
+        } else {
+            $upd = $conn->prepare("UPDATE customers SET Name=?, Email=? WHERE ID=?");
+            $upd->bind_param("ssi",$new_name,$new_email,$user_id); $upd->execute(); $upd->close();
+            $_SESSION['customer_name'] = $new_name;
+            $msg = 'Profile updated successfully.'; $msg_type = 'success';
+        }
+        $chk->close();
+    }
+}
+
 // Handle password change
 if (isset($_POST['change_password'])) {
     $current = trim($_POST['current_password'] ?? '');
@@ -101,7 +124,7 @@ $stmt->execute();
 $events = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-$default_tab = $msg ? 'security' : (count($cart_items) > 0 ? 'cart' : 'orders');
+$default_tab = $msg ? ($msg_type === 'success' && isset($_POST['update_profile']) ? 'profile' : 'security') : (count($cart_items) > 0 ? 'cart' : 'orders');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -141,6 +164,7 @@ $default_tab = $msg ? 'security' : (count($cart_items) > 0 ? 'cart' : 'orders');
                 'cart'     => '🛒 Cart (' . count($cart_items) . ')',
                 'orders'   => '📦 Orders (' . count($orders) . ')',
                 'events'   => '🎓 Events (' . count($events) . ')',
+                'profile'  => '👤 Profile',
                 'security' => '🔒 Security',
             ];
             foreach ($tabs as $id => $label): ?>
@@ -305,10 +329,39 @@ $default_tab = $msg ? 'security' : (count($cart_items) > 0 ? 'cart' : 'orders');
             <?php endif; ?>
         </div>
 
+        <!-- Profile -->
+        <div id="panel-profile" class="tab-panel p-6 <?= $default_tab !== 'profile' ? 'hidden' : '' ?>">
+            <h2 class="text-base font-semibold text-green-800 mb-4">Edit Profile</h2>
+            <?php if ($msg && (isset($_POST['update_profile']) || $default_tab === 'profile')): ?>
+                <div class="border-l-4 p-4 mb-5 rounded-r-lg text-sm
+                    <?= $msg_type === 'success' ? 'bg-green-50 border-green-500 text-green-800' : 'bg-red-50 border-red-500 text-red-800' ?>">
+                    <?= htmlspecialchars($msg) ?>
+                </div>
+            <?php endif; ?>
+            <form method="POST" class="max-w-sm space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Full Name</label>
+                    <input type="text" name="profile_name" required
+                        value="<?= htmlspecialchars($user['Name']) ?>"
+                        class="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Email Address</label>
+                    <input type="email" name="profile_email" required
+                        value="<?= htmlspecialchars($user['Email']) ?>"
+                        class="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+                </div>
+                <button type="submit" name="update_profile"
+                    class="bg-green-600 text-white px-6 py-2.5 rounded-xl hover:bg-green-700 transition text-sm font-medium">
+                    Save Changes
+                </button>
+            </form>
+        </div>
+
         <!-- Security -->
         <div id="panel-security" class="tab-panel p-6 <?= $default_tab !== 'security' ? 'hidden' : '' ?>">
             <h2 class="text-base font-semibold text-green-800 mb-4">Change Password</h2>
-            <?php if ($msg): ?>
+            <?php if ($msg && isset($_POST['change_password'])): ?>
                 <div class="border-l-4 p-4 mb-5 rounded-r-lg text-sm
                     <?= $msg_type === 'success' ? 'bg-green-50 border-green-500 text-green-800' : 'bg-red-50 border-red-500 text-red-800' ?>">
                     <?= htmlspecialchars($msg) ?>

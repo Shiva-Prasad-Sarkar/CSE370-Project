@@ -10,6 +10,7 @@
                     <a href="product.php" class="text-green-100 hover:text-white hover:bg-green-600 px-3 py-2 rounded-md text-sm font-medium transition">Products</a>
                     <a href="events.php" class="text-green-100 hover:text-white hover:bg-green-600 px-3 py-2 rounded-md text-sm font-medium transition">Events</a>
                     <a href="about.php" class="text-green-100 hover:text-white hover:bg-green-600 px-3 py-2 rounded-md text-sm font-medium transition">About</a>
+                    <a href="contact.php" class="text-green-100 hover:text-white hover:bg-green-600 px-3 py-2 rounded-md text-sm font-medium transition">Contact</a>
                 </div>
             </div>
             <div class="flex items-center gap-2">
